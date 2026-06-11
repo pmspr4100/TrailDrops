@@ -10,9 +10,15 @@ $AnimeRootFolder = "V:\" # Pense à vérifier que ce chemin est le bon
 # Chemin absolu direct vers l'exécutable FFmpeg
 $FFmpegPath      = "C:\Tools\ffmpeg\bin\ffmpeg.exe"
 
-# Paramètres d'extraction (en secondes)
-$StartOffset     = 5   
-$Duration        = 90  
+# --- PARAMÈTRES TRAILERS (Multi-extraits) ---
+$ClipDuration   = 25    # Durée de chaque extrait
+$T_Clip1        = 300   # Extrait 1 : 5ème minute
+$T_Clip2        = 600   # Extrait 2 : 10ème minute
+$T_Clip3        = 900   # Extrait 3 : 15ème minute
+
+# --- PARAMÈTRES BACKDROPS (Boucle) ---
+$BackdropOffset   = 600  # Début à la 10ème minute
+$BackdropDuration = 30   # Durée de 30 secondes
 
 # =========================================================================================
 # TRAITEMENT
@@ -53,23 +59,34 @@ foreach ($Series in $SeriesFolders) {
     }
 
     Write-Host "-> Épisode source identifié : $($FirstEpisode.Name)" -ForegroundColor Gray
+    $InputFile = $FirstEpisode.FullName
 
-    # 1. DOSSIER TRAILERS
+    # 1. DOSSIER TRAILERS (Dynamique : 3 extraits fusionnés)
     if (-not (Test-Path $ThemeMkvTrailerPath)) {
         if (-not (Test-Path $TrailersDir)) { 
             New-Item -Path $TrailersDir -ItemType Directory | Out-Null 
         }
-        Write-Host "-> Extraction de trailers/theme.mkv (Vidéo + Audio)..." -ForegroundColor Green
-        & $FFmpegPath -ss $StartOffset -t $Duration -i "$($FirstEpisode.FullName)" -c copy -y "$ThemeMkvTrailerPath" 2>$null
+        Write-Host "-> Génération du trailer multi-extraits (3x${ClipDuration}s)..." -ForegroundColor Green
+        
+        # Commande FFmpeg complexe pour couper 3 morceaux d'une SEULE source et les coller ensemble
+        # Note : On ré-encode ici (sans spécifier de codec lourd pour aller vite) car la concaténation de flux stream copy (-c copy) issus de timestamps différents d'un même fichier pose souvent des problèmes de synchronisation audio/vidéo.
+        $FilterArgs = "-ss $T_Clip1 -t $ClipDuration -i `"$InputFile`" " +
+                      "-ss $T_Clip2 -t $ClipDuration -i `"$InputFile`" " +
+                      "-ss $T_Clip3 -t $ClipDuration -i `"$InputFile`" " +
+                      "-filter_complex `"[0:v][0:a][1:v][1:a][2:v][2:a] concat=n=3:v=1:a=1 [v][a]`" " +
+                      "-map `"[v]`" -map `"[a]`" -y `"$ThemeMkvTrailerPath`""
+        
+        Start-Process -FilePath $FFmpegPath -ArgumentList $FilterArgs -NoNewWindow -Wait 2>$null
     }
 
-    # 2. DOSSIER BACKDROPS
+    # 2. DOSSIER BACKDROPS (Simple et rapide)
     if (-not (Test-Path $ThemeMkvBackdropPath)) {
         if (-not (Test-Path $BackdropsDir)) { 
             New-Item -Path $BackdropsDir -ItemType Directory | Out-Null 
         }
-        Write-Host "-> Extraction de backdrops/theme.mkv (Vidéo + Audio)..." -ForegroundColor Green
-        & $FFmpegPath -ss $StartOffset -t $Duration -i "$($FirstEpisode.FullName)" -c copy -y "$ThemeMkvBackdropPath" 2>$null
+        Write-Host "-> Extraction du backdrop (${BackdropDuration}s)..." -ForegroundColor Green
+        # Ici on garde le "-c copy" car c'est un seul bloc continu, ultra rapide.
+        & $FFmpegPath -ss $BackdropOffset -t $BackdropDuration -i "$InputFile" -c copy -y "$ThemeMkvBackdropPath" 2>$null
     }
 }
 
